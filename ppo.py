@@ -2,8 +2,8 @@ import tensorflow as tf
 import numpy as np
 import gym
 import argparse
-from operator import itemgetter 
-from collections import deque
+from operator import itemgetter
+from math import ceil
 
 from lib.utils import make_logdir
 from lib.models import PPO
@@ -18,7 +18,7 @@ def parse_args():
 
     parser.add_argument('--env', type=str, help='Gym Environment', default="PongNoFrameskip-v4")
 
-    parser.add_argument('--timesteps', type=int, help='Number of timesteps', default=1e5)
+    parser.add_argument('--timesteps', type=int, help='Number of timesteps', default=1e6)
 
     parser.add_argument('--num_envs', type=int, help='Number of episodes to run per iteration', default=4)
 
@@ -32,15 +32,19 @@ def parse_args():
 
     parser.add_argument('--lr', type=float, help='Learning Rate', default=2.5e-4)
 
+    parser.add_argument('--lr_anneal', type=bool, help='Anneal learning rate from initial value to zero over course of training', default=True)
+
     parser.add_argument('--gamma', type=float, help='Discount Factor', default=0.99)
 
     parser.add_argument('--lam', type=float, help='GAE Parameter', default=0.95)
 
-    parser.add_argument('--clip_param', type=float, help='Gradient Clip Parameter', default=0.2)
+    parser.add_argument('--clip_param', type=float, help='Gradient Clip Parameter', default=0.1)
+
+    parser.add_argument('--clip_anneal', type=bool, help='Anneal clipping parameter from initial value to zero over course of training', default=True)
 
     parser.add_argument('--entropy_coef', type=float, help='Entropy Loss Coefficient', default=0.01)
 
-    parser.add_argument('--vf_coef', type=float, help='Value Function Loss Coefficient', default=1.0)
+    parser.add_argument('--vf_coef', type=float, help='Value Function Loss Coefficient', default=0.5)
 
     args = parser.parse_args()
 
@@ -65,22 +69,28 @@ def main():
     print("Building agent...")
     agent = PPO(input_shape = (None, *env.observation_space.shape), 
                 num_actions = env.action_space.n, 
-                lr          = args.lr, 
-                clip_param  = args.clip_param, 
                 entropy_coef= args.entropy_coef, 
                 vf_coef     = args.vf_coef, 
                 logdir      = logdir)
 
     logger = Logger(agent.g, logdir)
 
-    while True:
+    iterations = ceil(args.timesteps / (args.num_envs*args.horizon))
+    for i in range(iterations):
+
         transitions, total_rewards = runner.run(agent)
+
+        lr = args.lr*(1 - i/iterations) if args.lr_anneal else args.lr
+        clip_param = args.clip_param*(1 - i/iterations) if args.clip_anneal else args.clip_param
+
+        pg_losses, vf_losses, entropy_losses, total_losses = [], [], [], []
+        indices = np.arange(len(transitions))
         for e in range(args.epochs):
-            pg_losses, vf_losses, entropy_losses, total_losses = [], [], [], []
+            np.random.shuffle(indices)
             for b in range(len(transitions)//args.batch_size):
-                indices = np.random.choice(len(transitions), args.batch_size, replace=False)
-                batch = itemgetter(*indices)(transitions)
-                pg_loss, vf_loss, entropy_loss, loss, gs = agent.update_policy(*zip(*batch))
+                batch_idx = indices[b*args.batch_size:(b+1)*args.batch_size]
+                batch = itemgetter(*batch_idx)(transitions)
+                pg_loss, vf_loss, entropy_loss, loss, gs = agent.update_policy(*zip(*batch), lr, clip_param)
 
                 pg_losses.append(pg_loss)
                 vf_losses.append(vf_loss)
@@ -91,7 +101,7 @@ def main():
 
         if total_rewards:
             logger.log_reward(total_rewards, runner.frames)
-        logger.log_losses(np.mean(pg_losses), np.mean(vf_losses), np.mean(entropy_losses), np.mean(total_losses), runner.frames)
+        logger.log_losses(np.mean(pg_losses), np.mean(vf_losses), np.mean(entropy_losses), np.mean(total_losses), lr, clip_param, runner.frames)
         logger.log_console(runner.frames)
 
         if runner.frames >= args.timesteps:

@@ -31,7 +31,13 @@ class Logger(object):
         self.total_loss = tf.placeholder(tf.float32)
         total_loss_sum = tf.summary.scalar('Total Loss', self.total_loss)
 
-        self.merged_loss_sum = tf.summary.merge([pg_loss_sum, vf_loss_sum, entropy_loss_sum, total_loss_sum])
+        self.lr = tf.placeholder(tf.float32)
+        lr_sum = tf.summary.scalar('Learning Rate', self.lr)
+
+        self.clip_param = tf.placeholder(tf.float32)
+        cp_sum = tf.summary.scalar('Clipping Parameter', self.clip_param)
+
+        self.merged_loss_sum = tf.summary.merge([pg_loss_sum, vf_loss_sum, entropy_loss_sum, total_loss_sum, lr_sum, cp_sum])
 
         self.reward = tf.placeholder(tf.float32)
         reward_sum = tf.summary.scalar('Reward', self.reward)
@@ -41,13 +47,13 @@ class Logger(object):
 
         self.merged_reward_sum = tf.summary.merge([reward_sum, mean_reward_sum])
 
-    def log_losses(self, pg_loss, vf_loss, entropy_loss, total_loss, frame):
+    def log_losses(self, pg_loss, vf_loss, entropy_loss, total_loss, lr, clip_param, frame):
         self.pg_losses.append(pg_loss)
         self.vf_losses.append(vf_loss)
         self.ent_losses.append(entropy_loss)
         self.total_losses.append(total_loss)
 
-        merged_loss_sum = self.sess.run(self.merged_loss_sum, feed_dict={ self.pg_loss: pg_loss, self.vf_loss: vf_loss, self.entropy_loss: entropy_loss, self.total_loss: total_loss})
+        merged_loss_sum = self.sess.run(self.merged_loss_sum, feed_dict={ self.pg_loss: pg_loss, self.vf_loss: vf_loss, self.entropy_loss: entropy_loss, self.total_loss: total_loss, self.lr: lr, self.clip_param: clip_param})
         self.writer.add_summary(merged_loss_sum, frame)
 
     def log_reward(self, rewards, frame):

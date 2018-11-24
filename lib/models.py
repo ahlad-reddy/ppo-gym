@@ -5,11 +5,9 @@ import os
 
 
 class PPO(object):
-    def __init__(self, input_shape, num_actions, lr, clip_param, entropy_coef, vf_coef, logdir):
+    def __init__(self, input_shape, num_actions, entropy_coef, vf_coef, logdir):
         self.input_shape = input_shape
         self.num_actions = num_actions
-        self.lr = lr
-        self.clip_param = clip_param
         self.entropy_coef = entropy_coef
         self.vf_coef = vf_coef
         self.logdir = logdir
@@ -32,6 +30,8 @@ class PPO(object):
         self.policy_old = tf.placeholder(tf.float32, (None, ))
         self.advantage = tf.placeholder(tf.float32, (None, ))
         self.total_return = tf.placeholder(tf.float32, (None, ))
+        self.lr = tf.placeholder(tf.float32)
+        self.clip_param = tf.placeholder(tf.float32)
 
     def _network(self):
         if len(self.input_shape) == 4:
@@ -72,7 +72,7 @@ class PPO(object):
         self.entropy_loss = tf.reduce_mean(entropy)
 
         self.loss = self.pg_loss + self.vf_coef * self.vf_loss - self.entropy_coef * self.entropy_loss
-        optimizer = tf.train.AdamOptimizer(self.lr)
+        optimizer = tf.train.AdamOptimizer(self.lr, epsilon=1e-5)
         self.train_op = optimizer.minimize(self.loss, global_step=self.global_step)
 
     def _init_session(self):
@@ -94,6 +94,21 @@ class PPO(object):
         action = [np.random.choice(self.num_actions, p=p) for p in prob]
         return action, prob[range(len(prob)), action], value
 
-    def update_policy(self, observation, action, policy_old, advantage, total_return):
-        pg_loss, vf_loss, entropy_loss, loss, _, gs = self.sess.run([self.pg_loss, self.vf_loss, self.entropy_loss, self.loss, self.train_op, self.global_step], feed_dict={ self.observation: observation, self.action: action, self.policy_old: policy_old, self.advantage: advantage, self.total_return: total_return })
+    def update_policy(self, observation, action, policy_old, advantage, total_return, lr, clip_param):
+        pg_loss, vf_loss, entropy_loss, loss, _, gs = self.sess.run([
+            self.pg_loss, 
+            self.vf_loss, 
+            self.entropy_loss, 
+            self.loss, 
+            self.train_op, 
+            self.global_step], 
+            feed_dict={ 
+                self.observation: observation, 
+                self.action: action, 
+                self.policy_old: policy_old, 
+                self.advantage: advantage, 
+                self.total_return: total_return, 
+                self.lr: lr, 
+                self.clip_param: clip_param })
         return pg_loss, vf_loss, entropy_loss, loss, gs
+
