@@ -1,48 +1,57 @@
 import numpy as np
 
 class Runner(object):
-    def __init__(self, env, timesteps, gamma, lam):
+    def __init__(self, env, horizon, gamma, lam):
         self.env = env
-        self.timesteps = timesteps
+        self.horizon = horizon
         self.gamma = gamma
         self.lam = lam
-        self.episode_count = 0
-        self.frame_count = 0
+        self.frames = 0
 
-    def run_episode(self, agent):
+    def run(self, agent):
         obs, actions, probs, values, rewards, masks = [], [], [], [], [], []
-        state = self.env.reset()
-        for t in range(self.timesteps):
-            action, prob, value = agent.sample_action([state])
-            next_state, reward, done, _ = self.env.step(action)
+        state = self.env.obs
+        total_rewards = []
+        for t in range(self.horizon):
+            action, prob, value = agent.sample_action(state)
+            next_state, reward, done, info = self.env.step(action)
             
             obs.append(state)
             actions.append(action)
             probs.append(prob)
             values.append(value)
             rewards.append(reward)
-            masks.append(not done)
+            masks.append(np.invert(done))
 
             state = next_state
-            self.frame_count += 1
+            for i in info:
+                ep_info = i.get('episode')
+                if ep_info: total_rewards.append(ep_info['total_reward'])
+            self.frames += self.env.num_envs
 
-        self.episode_count += 1
-        total_reward = sum(rewards)
-
-        _, __, value = agent.sample_action([state])
+        _, __, value = agent.sample_action(state)
         values.append(value)
 
-        advantages, returns = self._calculate_gae(np.array(values), np.array(rewards), np.array(masks))
-        trajectory = [(obs[t], actions[t], probs[t], advantages[t], returns[t]) for t in range(self.timesteps)]
-        return trajectory, total_reward
+        obs, actions, probs, values, rewards, masks = map(np.array, [obs, actions, probs, values, rewards, masks])
+
+        advantages, returns = self._calculate_gae(values, rewards, masks)
+        transitions = self._return_transitions(obs, actions, probs, advantages, returns)
+        return transitions, total_rewards
 
     def _calculate_gae(self, values, rewards, masks):
-        returns, advantages = [], []
+        returns, advantages = np.zeros_like(rewards), np.zeros_like(rewards)
         deltas = rewards + self.gamma * values[1:] * masks - values[:-1]
         gae = 0
-        for t in reversed(range(self.timesteps)):
-            gae = deltas[t] + self.gamma * self.lam * masks[t] * gae
-            advantages.insert(0, gae)
+        for t in reversed(range(self.horizon)):
+            advantages[t] = gae = deltas[t] + self.gamma * self.lam * masks[t] * gae
         returns = advantages + values[:-1]
         advantages = (advantages - np.mean(advantages))/(np.std(advantages) + 1e-8)
         return advantages, returns
+
+    def _return_transitions(self, *args):
+        transitions = []
+        for n in range(self.env.num_envs):
+            transitions += list(zip(*[a[:, n] for a in args]))
+        return transitions
+
+

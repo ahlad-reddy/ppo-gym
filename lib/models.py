@@ -89,12 +89,11 @@ class PPO(object):
         self.saver.restore(self.sess, model_path)
 
     def sample_action(self, observation):
-        p, value = self.sess.run([self.policy, self.value_fn], feed_dict={ self.observation: observation })
-        p = p.squeeze()
+        prob, value = self.sess.run([self.policy, self.value_fn], feed_dict={ self.observation: observation })
         value = value.squeeze()
-        action = np.random.choice(self.num_actions, p=p)
-        return action, p[action], value
+        action = [np.random.choice(self.num_actions, p=p) for p in prob]
+        return action, prob[range(len(prob)), action], value
 
     def update_policy(self, observation, action, policy_old, advantage, total_return):
-        pg_loss, vf_loss, entropy_loss, loss, _ = self.sess.run([self.pg_loss, self.vf_loss, self.entropy_loss, self.loss, self.train_op], feed_dict={ self.observation: observation, self.action: action, self.policy_old: policy_old, self.advantage: advantage, self.total_return: total_return })
-        return pg_loss, vf_loss, entropy_loss, loss
+        pg_loss, vf_loss, entropy_loss, loss, _, gs = self.sess.run([self.pg_loss, self.vf_loss, self.entropy_loss, self.loss, self.train_op, self.global_step], feed_dict={ self.observation: observation, self.action: action, self.policy_old: policy_old, self.advantage: advantage, self.total_return: total_return })
+        return pg_loss, vf_loss, entropy_loss, loss, gs

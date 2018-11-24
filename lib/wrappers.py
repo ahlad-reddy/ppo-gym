@@ -8,6 +8,7 @@ import gym
 import gym.spaces
 import numpy as np
 import collections
+import asyncio
 
 
 class FireResetEnv(gym.Wrapper):
@@ -112,7 +113,34 @@ class BufferWrapper(gym.ObservationWrapper):
         return self.buffer
 
 
-def wrap_env(env):
+class ParallelEnvWrapper(object):
+    def __init__(self, env_fn, env_id, num_envs):
+        self.num_envs = num_envs
+        self.envs = [env_fn(env_id) for i in range(self.num_envs)]
+        self.obs = [env.reset() for env in self.envs]
+        self.reward = [0 for i in range(self.num_envs)]
+        self.action_space = self.envs[0].action_space
+        self.observation_space = self.envs[0].observation_space
+        self.loop = asyncio.get_event_loop()
+
+    def step(self, actions):
+        assert len(actions) == self.num_envs
+        results = [self.loop.run_until_complete(self._step(i, actions[i])) for i in range(self.num_envs)]
+        self.obs[:], r, d, info = np.column_stack(results)
+        return self.obs, r, d, info
+
+    async def _step(self, i, action):
+        o, r, d, info = self.envs[i].step(action)
+        self.reward[i] += r
+        if d == True:
+            o = self.envs[i].reset()
+            info['episode'] = { 'total_reward': self.reward[i] }
+            self.reward[i] = 0
+        return o, r, d, info
+
+
+def make_atari(env_id):
+    env = gym.make(env_id)
     env = MaxAndSkipEnv(env)
     env = FireResetEnv(env)
     env = ProcessFrame(env)
