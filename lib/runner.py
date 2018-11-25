@@ -35,7 +35,7 @@ class Runner(object):
         obs, actions, probs, values, rewards, masks = map(np.array, [obs, actions, probs, values, rewards, masks])
 
         advantages, returns = self._calculate_gae(values, rewards, masks)
-        transitions = self._return_transitions(obs, actions, probs, advantages, returns)
+        transitions = self._return_transitions(obs, actions, probs, values[:-1], advantages, returns)
         return transitions, total_rewards
 
     def _calculate_gae(self, values, rewards, masks):

@@ -1,4 +1,3 @@
-import tensorflow as tf 
 import numpy as np
 import gym
 import argparse
@@ -18,6 +17,8 @@ def parse_args():
 
     parser.add_argument('--env', type=str, help='Gym Environment', default="PongNoFrameskip-v4")
 
+    parser.add_argument('--train', help='Train model', action="store_true")
+
     parser.add_argument('--timesteps', type=int, help='Number of timesteps', default=1e6)
 
     parser.add_argument('--num_envs', type=int, help='Number of episodes to run per iteration', default=4)
@@ -28,7 +29,7 @@ def parse_args():
 
     parser.add_argument('--batch_size', type=int, help='Batch size', default=32)
 
-    parser.add_argument('--save_freq', type=int, help='Number of updates before saving checkpoint', default=1000)
+    parser.add_argument('--save_freq', type=int, help='Number of updates before saving checkpoint', default=5000)
 
     parser.add_argument('--lr', type=float, help='Learning Rate', default=2.5e-4)
 
@@ -46,22 +47,20 @@ def parse_args():
 
     parser.add_argument('--vf_coef', type=float, help='Value Function Loss Coefficient', default=0.5)
 
+    parser.add_argument('--evaluate', help='Evaluate model', action="store_true")
+
+    parser.add_argument('--model_path', type=str, help='Path to saved model')
+
+    parser.add_argument('--logdir', type=str, help='Path to log directory')
+
+    parser.add_argument('--render', help='Render game environment during evaluation', action="store_true")
+
     args = parser.parse_args()
 
     return args
 
 
-def main():
-    args = parse_args()
-
-    logdir = make_logdir(args.env)
-
-    print('Creating game environments for {}...'.format(args.env))
-    env = gym.make(args.env)
-    if env.observation_space.shape == (210, 160, 3):
-        env_fn = make_atari
-    else:
-        env_fn = gym.make
+def train(env_fn, logdir, args):
     env = ParallelEnvWrapper(env_fn, args.env, args.num_envs)
 
     runner = Runner(env, args.horizon, args.gamma, args.lam)
@@ -80,8 +79,8 @@ def main():
 
         transitions, total_rewards = runner.run(agent)
 
-        lr = args.lr*(1 - i/iterations) if args.lr_anneal else args.lr
-        clip_param = args.clip_param*(1 - i/iterations) if args.clip_anneal else args.clip_param
+        lr = args.lr * (1 - args.lr_anneal*i/iterations)
+        clip_param = args.clip_param * (1 - args.clip_anneal*i/iterations)
 
         pg_losses, vf_losses, entropy_losses, total_losses = [], [], [], []
         indices = np.arange(len(transitions))
@@ -105,9 +104,50 @@ def main():
         logger.log_console(runner.frames)
 
         if runner.frames >= args.timesteps:
-            agent.save_model()
+            model_path = agent.save_model()
             break
 
+    return model_path
+
+
+def evaluate(env_fn, logdir, model_path, args):
+    env = env_fn(args.env)
+    env = gym.wrappers.Monitor(env, logdir)
+
+    agent = PPO(input_shape = (None, *env.observation_space.shape), 
+                num_actions = env.action_space.n)
+    agent.load_model(model_path)
+
+    obs = env.reset()
+    total_reward = 0
+    done = False
+    while not done:
+        if args.render: env.render()
+        action, _, __ = agent.sample_action([obs])
+        obs, r, done, _ = env.step(action)
+        total_reward += r
+    print('Total Reward: {}'.format(total_reward))
+
+    env.env.close()
+
+
+def main():
+    args = parse_args()
+
+    logdir = args.logdir if args.logdir else make_logdir(args.env)
+    model_path = args.model_path
+
+    print('Creating game environments for {}...'.format(args.env))
+    env = gym.make(args.env)
+    if env.observation_space.shape == (210, 160, 3):
+        env_fn = make_atari
+    else:
+        env_fn = gym.make
+
+    if args.train:
+        model_path = train(env_fn, logdir, args)
+
+    evaluate(env_fn, logdir, model_path, args)
 
 
 if __name__ == '__main__':

@@ -11,27 +11,6 @@ import collections
 import asyncio
 
 
-class FireResetEnv(gym.Wrapper):
-    def __init__(self, env=None):
-        """For environments where the user needs to press FIRE for the game to start."""
-        super(FireResetEnv, self).__init__(env)
-        assert env.unwrapped.get_action_meanings()[1] == 'FIRE'
-        assert len(env.unwrapped.get_action_meanings()) >= 3
-
-    def step(self, action):
-        return self.env.step(action)
-
-    def reset(self):
-        self.env.reset()
-        obs, _, done, _ = self.env.step(1)
-        if done:
-            self.env.reset()
-        obs, _, done, _ = self.env.step(2)
-        if done:
-            self.env.reset()
-        return obs
-
-
 class MaxAndSkipEnv(gym.Wrapper):
     def __init__(self, env=None, skip=4):
         """Return only every `skip`-th frame"""
@@ -60,6 +39,27 @@ class MaxAndSkipEnv(gym.Wrapper):
         return obs
 
 
+class FireResetEnv(gym.Wrapper):
+    def __init__(self, env=None):
+        """For environments where the user needs to press FIRE for the game to start."""
+        super(FireResetEnv, self).__init__(env)
+        assert env.unwrapped.get_action_meanings()[1] == 'FIRE'
+        assert len(env.unwrapped.get_action_meanings()) >= 3
+
+    def step(self, action):
+        return self.env.step(action)
+
+    def reset(self):
+        self.env.reset()
+        obs, _, done, _ = self.env.step(1)
+        if done:
+            self.env.reset()
+        obs, _, done, _ = self.env.step(2)
+        if done:
+            self.env.reset()
+        return obs
+
+
 class ProcessFrame(gym.ObservationWrapper):
     def __init__(self, env=None):
         super(ProcessFrame, self).__init__(env)
@@ -78,30 +78,12 @@ class ProcessFrame(gym.ObservationWrapper):
         return x_t.astype(np.uint8)
 
 
-class ImageToTensorFlow(gym.ObservationWrapper):
-    def __init__(self, env):
-        super(ImageToTensorFlow, self).__init__(env)
-        old_shape = self.observation_space.shape
-        self.observation_space = gym.spaces.Box(low=0.0, high=1.0, shape=(old_shape[0], old_shape[1], old_shape[2]),
-                                                dtype=np.float32)
-
-    def observation(self, observation):
-        return np.expand_dims(observation, axis=0)
-
-
-class ScaledFloatFrame(gym.ObservationWrapper):
-    def observation(self, obs):
-        return np.array(obs).astype(np.float32) / 255.0
-
-
 class BufferWrapper(gym.ObservationWrapper):
     def __init__(self, env, n_steps, dtype=np.float32):
         super(BufferWrapper, self).__init__(env)
         self.dtype = dtype
         old_space = env.observation_space
-        self.observation_space = gym.spaces.Box(
-            old_space.low.repeat(n_steps, axis=2),
-            old_space.high.repeat(n_steps, axis=2), dtype=dtype)
+        self.observation_space = gym.spaces.Box(low=0, high=255, shape=(*old_space.shape[:-1], old_space.shape[-1]*n_steps), dtype=dtype)
 
     def reset(self):
         self.buffer = np.zeros_like(self.observation_space.low, dtype=self.dtype)
@@ -111,6 +93,15 @@ class BufferWrapper(gym.ObservationWrapper):
         self.buffer[:, :, :-1] = self.buffer[:, :, 1:]
         self.buffer[:, :, -1] = observation[:, :, 0]
         return self.buffer
+
+
+class ScaledFloatFrame(gym.ObservationWrapper):
+    def __init__(self, env):
+        gym.ObservationWrapper.__init__(self, env)
+        self.observation_space = gym.spaces.Box(low=0, high=1, shape=env.observation_space.shape, dtype=np.float32)
+
+    def observation(self, obs):
+        return np.array(obs).astype(np.float32) / 255.0
 
 
 class ParallelEnvWrapper(object):
@@ -124,9 +115,8 @@ class ParallelEnvWrapper(object):
         self.loop = asyncio.get_event_loop()
 
     def step(self, actions):
-        assert len(actions) == self.num_envs
         results = [self.loop.run_until_complete(self._step(i, actions[i])) for i in range(self.num_envs)]
-        self.obs[:], r, d, info = np.column_stack(results)
+        self.obs, r, d, info = zip(*results)
         return self.obs, r, d, info
 
     async def _step(self, i, action):
@@ -144,6 +134,5 @@ def make_atari(env_id):
     env = MaxAndSkipEnv(env)
     env = FireResetEnv(env)
     env = ProcessFrame(env)
-    env = ImageToTensorFlow(env)
     env = BufferWrapper(env, 4)
     return ScaledFloatFrame(env)
