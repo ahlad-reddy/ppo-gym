@@ -208,7 +208,7 @@ class ParallelEnvWrapper(object):
 def make_atari(env_id, training=True):
     env = gym.make(env_id)
     assert 'NoFrameskip' in env.spec.id
-    env = NoopResetEnv(env, noop_max=30)
+    if training: env = NoopResetEnv(env, noop_max=30)
     env = MaxAndSkipEnv(env, skip=4)
     if training: env = EpisodicLifeEnv(env)
     if 'FIRE' in env.unwrapped.get_action_meanings():
