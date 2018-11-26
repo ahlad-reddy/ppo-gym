@@ -7,7 +7,7 @@ from math import ceil
 from lib.utils import make_logdir
 from lib.models import PPO
 from lib.runner import Runner
-from lib.wrappers import make_atari, ParallelEnvWrapper
+from lib.wrappers import make_atari, make_gym, ParallelEnvWrapper
 from lib.logger import Logger
 
 
@@ -19,7 +19,7 @@ def parse_args():
 
     parser.add_argument('--train', help='Train model', action="store_true")
 
-    parser.add_argument('--timesteps', type=int, help='Number of timesteps', default=1e6)
+    parser.add_argument('--timesteps', type=float, help='Number of timesteps', default=1e6)
 
     parser.add_argument('--num_envs', type=int, help='Number of episodes to run per iteration', default=4)
 
@@ -111,7 +111,7 @@ def train(env_fn, logdir, args):
 
 
 def evaluate(env_fn, logdir, model_path, args):
-    env = env_fn(args.env)
+    env = env_fn(args.env, training=False)
     env = gym.wrappers.Monitor(env, logdir)
 
     agent = PPO(input_shape = (None, *env.observation_space.shape), 
@@ -142,7 +142,7 @@ def main():
     if env.observation_space.shape == (210, 160, 3):
         env_fn = make_atari
     else:
-        env_fn = gym.make
+        env_fn = make_gym
 
     if args.train:
         model_path = train(env_fn, logdir, args)
