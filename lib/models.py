@@ -5,9 +5,10 @@ import os
 
 
 class PPO(object):
-    def __init__(self, input_shape, num_actions, entropy_coef=0.01, vf_coef=0.5, logdir=None):
+    def __init__(self, input_shape, num_actions, dist_type, entropy_coef=0.01, vf_coef=0.5, logdir=None):
         self.input_shape = input_shape
         self.num_actions = num_actions
+        self.dist_type = dist_type
         self.entropy_coef = entropy_coef
         self.vf_coef = vf_coef
         self.logdir = logdir
@@ -58,6 +59,14 @@ class PPO(object):
         fc_1 = slim.fully_connected(self.observation, 64, tf.nn.tanh)
         fc_2 = slim.fully_connected(fc_1, 64, tf.nn.tanh)
         return fc_2
+
+    def _distribution(self, latent):
+        if self.dist_type == "categorical":
+            logits = slim.fully_connected(latent, self.num_actions, None)
+            return tf.distributions.Categorical(logits=logits)
+        elif self.dist_type == "normal":
+            mean = slim.fully_connected(latent, self.num_actions, None)
+            logstd = tf.get_variable()
 
     def _compute_loss(self):
         mask = tf.one_hot(self.action, self.num_actions, on_value=True, off_value=False, dtype=tf.bool)

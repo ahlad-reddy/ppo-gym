@@ -4,7 +4,7 @@ import argparse
 from operator import itemgetter
 from math import ceil
 
-from lib.utils import make_logdir
+from lib.utils import make_logdir, dist_type
 from lib.models import PPO
 from lib.runner import Runner
 from lib.wrappers import make_atari, make_gym, ParallelEnvWrapper
@@ -68,6 +68,7 @@ def train(env_fn, logdir, args):
     print("Building agent...")
     agent = PPO(input_shape = (None, *env.observation_space.shape), 
                 num_actions = env.action_space.n, 
+                dist_type   = dist_type(env),
                 entropy_coef= args.entropy_coef, 
                 vf_coef     = args.vf_coef, 
                 logdir      = logdir)
@@ -115,7 +116,8 @@ def evaluate(env_fn, logdir, model_path, args):
     env = gym.wrappers.Monitor(env, logdir)
 
     agent = PPO(input_shape = (None, *env.observation_space.shape), 
-                num_actions = env.action_space.n)
+                num_actions = env.action_space.n,
+                dist_type   = dist_type(env))
     agent.load_model(model_path)
 
     obs = env.reset()
