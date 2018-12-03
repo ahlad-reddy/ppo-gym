@@ -2,11 +2,13 @@ import tensorflow as tf
 from tensorflow.contrib import slim
 import numpy as np
 import os
+import gym
 
 
 class PPO(object):
-    def __init__(self, input_shape, num_actions, dist_type, entropy_coef=0.01, vf_coef=0.5, logdir=None):
+    def __init__(self, input_shape, output_shape, num_actions, dist_type, entropy_coef=0.01, vf_coef=0.5, logdir=None):
         self.input_shape = input_shape
+        self.output_shape = output_shape
         self.num_actions = num_actions
         self.dist_type = dist_type
         self.entropy_coef = entropy_coef
@@ -27,8 +29,9 @@ class PPO(object):
 
     def _placeholders(self):
         self.observation = tf.placeholder(tf.float32, self.input_shape)
-        self.action = tf.placeholder(tf.int32, (None, ))
-        self.policy_old = tf.placeholder(tf.float32, (None, ))
+        action_dtype = tf.int32 if self.dist_type == 'categorical' else tf.float32
+        self.action_old = tf.placeholder(action_dtype, self.output_shape)
+        self.logprob_old = tf.placeholder(tf.float32, (None, ))
         self.value_old = tf.placeholder(tf.float32, (None, ))
         self.advantage = tf.placeholder(tf.float32, (None, ))
         self.total_return = tf.placeholder(tf.float32, (None, ))
@@ -37,14 +40,18 @@ class PPO(object):
 
     def _network(self):
         if len(self.input_shape) == 4:
-            latent = self._cnn()
+            pg_latent = self._cnn()
+            vf_latent = pg_latent
         else:
-            latent = self._mlp()
+            pg_latent = self._mlp()
+            vf_latent = self._mlp()
 
-        logits = slim.fully_connected(latent, self.num_actions, None)
-        self.policy = slim.softmax(logits)
+        self.dist = self._distribution(pg_latent)
 
-        value_fn = slim.fully_connected(latent, 1, None)
+        self.action = self.dist.sample()
+        self.logprob = self._logprob(self.action)
+
+        value_fn = slim.fully_connected(vf_latent, 1, None)
         self.value_fn = tf.squeeze(value_fn)
 
     def _cnn(self):
@@ -66,12 +73,18 @@ class PPO(object):
             return tf.distributions.Categorical(logits=logits)
         elif self.dist_type == "normal":
             mean = slim.fully_connected(latent, self.num_actions, None)
-            logstd = tf.get_variable()
+            logstd = tf.get_variable('logst', shape=(1, self.num_actions), initializer=tf.zeros_initializer())
+            return tf.distributions.Normal(loc=mean, scale=tf.exp(logstd))
+
+    def _logprob(self, action):
+        return {
+            'categorical': self.dist.log_prob(action),
+            'normal'     : tf.reduce_sum(self.dist.log_prob(action), axis=-1)
+        }[self.dist_type]
 
     def _compute_loss(self):
-        mask = tf.one_hot(self.action, self.num_actions, on_value=True, off_value=False, dtype=tf.bool)
-        policy_new = tf.boolean_mask(self.policy, mask)
-        ratio = policy_new / self.policy_old
+        logprob = self._logprob(self.action_old)
+        ratio = tf.exp(logprob - self.logprob_old)
         pg_loss_1 = self.advantage * ratio
         pg_loss_2 = self.advantage * tf.clip_by_value(ratio, 1-self.clip_param, 1+self.clip_param)
         self.pg_loss = -tf.reduce_mean(tf.minimum(pg_loss_1, pg_loss_2))
@@ -81,8 +94,7 @@ class PPO(object):
         vf_loss_2 = tf.losses.mean_squared_error(self.total_return, vf_clipped)
         self.vf_loss = tf.reduce_mean(tf.maximum(vf_loss_1, vf_loss_2))
 
-        entropy = -tf.reduce_sum(self.policy * tf.log(self.policy), axis=1)
-        self.entropy_loss = tf.reduce_mean(entropy)
+        self.entropy_loss = tf.reduce_mean(self.dist.entropy())
 
         self.loss = self.pg_loss + self.vf_coef * self.vf_loss - self.entropy_coef * self.entropy_loss
         params = tf.trainable_variables()
@@ -91,7 +103,6 @@ class PPO(object):
         grads, var = zip(*grads_and_var)
         grads, _grad_norm = tf.clip_by_global_norm(grads, 0.5)
         self.train_op = optimizer.apply_gradients(list(zip(grads, var)), global_step=self.global_step)
-        # self.train_op = optimizer.minimize(self.loss, global_step=self.global_step)
 
     def _init_session(self):
         self.sess = tf.Session(graph=self.g)
@@ -107,11 +118,9 @@ class PPO(object):
         self.saver.restore(self.sess, model_path)
 
     def sample_action(self, observation):
-        prob, value = self.sess.run([self.policy, self.value_fn], feed_dict={ self.observation: observation })
-        action = [np.random.choice(self.num_actions, p=p) for p in prob]
-        return action, prob[range(len(prob)), action], value
+        return self.sess.run([self.action, self.logprob, self.value_fn], feed_dict={ self.observation: observation })
 
-    def update_policy(self, observation, action, policy_old, value_old, advantage, total_return, lr, clip_param):
+    def update_policy(self, observation, action_old, logprob_old, value_old, advantage, total_return, lr, clip_param):
         pg_loss, vf_loss, entropy_loss, loss, _, gs = self.sess.run([
             self.pg_loss, 
             self.vf_loss, 
@@ -121,12 +130,32 @@ class PPO(object):
             self.global_step], 
             feed_dict={ 
                 self.observation: observation, 
-                self.action: action, 
-                self.policy_old: policy_old, 
+                self.action_old: action_old, 
+                self.logprob_old: logprob_old, 
                 self.value_old: value_old, 
                 self.advantage: advantage, 
                 self.total_return: total_return, 
                 self.lr: lr, 
                 self.clip_param: clip_param })
         return pg_loss, vf_loss, entropy_loss, loss, gs
+
+
+
+def build_agent(env, logdir, args):
+    input_shape = (None, *env.observation_space.shape)
+    output_shape = (None, *env.action_space.shape)
+    num_actions = output_shape[-1] or env.action_space.n
+    dist_type = {
+        gym.spaces.Discrete : 'categorical',
+        gym.spaces.Box      : 'normal'        
+    }[type(env.action_space)]
+    
+    return PPO( input_shape = input_shape, 
+                output_shape= output_shape, 
+                num_actions = num_actions,
+                dist_type   = dist_type,
+                entropy_coef= args.entropy_coef, 
+                vf_coef     = args.vf_coef, 
+                logdir      = logdir)
+
 

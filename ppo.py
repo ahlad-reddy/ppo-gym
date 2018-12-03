@@ -1,11 +1,12 @@
 import numpy as np
 import gym
+import pybullet_envs
 import argparse
 from operator import itemgetter
 from math import ceil
 
-from lib.utils import make_logdir, dist_type
-from lib.models import PPO
+from lib.utils import make_logdir
+from lib.models import build_agent
 from lib.runner import Runner
 from lib.wrappers import make_atari, make_gym, ParallelEnvWrapper
 from lib.logger import Logger
@@ -33,7 +34,7 @@ def parse_args():
 
     parser.add_argument('--lr', type=float, help='Learning Rate', default=2.5e-4)
 
-    parser.add_argument('--lr_anneal', type=bool, help='Anneal learning rate from initial value to zero over course of training', default=True)
+    parser.add_argument('--lr_anneal', help='Anneal learning rate from initial value to zero over course of training', action="store_true")
 
     parser.add_argument('--gamma', type=float, help='Discount Factor', default=0.99)
 
@@ -41,13 +42,11 @@ def parse_args():
 
     parser.add_argument('--clip_param', type=float, help='Gradient Clip Parameter', default=0.1)
 
-    parser.add_argument('--clip_anneal', type=bool, help='Anneal clipping parameter from initial value to zero over course of training', default=True)
+    parser.add_argument('--clip_anneal', help='Anneal clipping parameter from initial value to zero over course of training', action="store_true")
 
     parser.add_argument('--entropy_coef', type=float, help='Entropy Loss Coefficient', default=0.01)
 
     parser.add_argument('--vf_coef', type=float, help='Value Function Loss Coefficient', default=0.5)
-
-    parser.add_argument('--evaluate', help='Evaluate model', action="store_true")
 
     parser.add_argument('--model_path', type=str, help='Path to saved model')
 
@@ -62,17 +61,8 @@ def parse_args():
 
 def train(env_fn, logdir, args):
     env = ParallelEnvWrapper(env_fn, args.env, args.num_envs)
-
     runner = Runner(env, args.horizon, args.gamma, args.lam)
-
-    print("Building agent...")
-    agent = PPO(input_shape = (None, *env.observation_space.shape), 
-                num_actions = env.action_space.n, 
-                dist_type   = dist_type(env),
-                entropy_coef= args.entropy_coef, 
-                vf_coef     = args.vf_coef, 
-                logdir      = logdir)
-
+    agent = build_agent(env, logdir, args)
     logger = Logger(agent.g, logdir)
 
     iterations = ceil(args.timesteps / (args.num_envs*args.horizon))
@@ -115,9 +105,7 @@ def evaluate(env_fn, logdir, model_path, args):
     env = env_fn(args.env, training=False)
     env = gym.wrappers.Monitor(env, logdir)
 
-    agent = PPO(input_shape = (None, *env.observation_space.shape), 
-                num_actions = env.action_space.n,
-                dist_type   = dist_type(env))
+    agent = build_agent(env, logdir, args)
     agent.load_model(model_path)
 
     obs = env.reset()
@@ -126,7 +114,7 @@ def evaluate(env_fn, logdir, model_path, args):
     while not done:
         if args.render: env.render()
         action, _, __ = agent.sample_action([obs])
-        obs, r, done, _ = env.step(action)
+        obs, r, done, _ = env.step(action.squeeze())
         total_reward += r
     print('Total Reward: {}'.format(total_reward))
 

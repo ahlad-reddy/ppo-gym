@@ -9,16 +9,16 @@ class Runner(object):
         self.frames = 0
 
     def run(self, agent):
-        obs, actions, probs, values, rewards, masks = [], [], [], [], [], []
+        obs, actions, logprobs, values, rewards, masks = [], [], [], [], [], []
         state = self.env.obs
         total_rewards = []
         for t in range(self.horizon):
-            action, prob, value = agent.sample_action(state)
+            action, logprob, value = agent.sample_action(state)
             next_state, reward, done, info = self.env.step(action)
             
             obs.append(state)
             actions.append(action)
-            probs.append(prob)
+            logprobs.append(logprob)
             values.append(value)
             rewards.append(reward)
             masks.append(np.invert(done))
@@ -32,10 +32,10 @@ class Runner(object):
         _, __, value = agent.sample_action(state)
         values.append(value)
 
-        obs, actions, probs, values, rewards, masks = map(np.array, [obs, actions, probs, values, rewards, masks])
+        obs, actions, logprobs, values, rewards, masks = map(np.array, [obs, actions, logprobs, values, rewards, masks])
 
         advantages, returns = self._calculate_gae(values, rewards, masks)
-        transitions = self._return_transitions(obs, actions, probs, values[:-1], advantages, returns)
+        transitions = self._return_transitions(obs, actions, logprobs, values[:-1], advantages, returns)
         return transitions, total_rewards
 
     def _calculate_gae(self, values, rewards, masks):

@@ -221,4 +221,5 @@ def make_atari(env_id, training=True):
 
 def make_gym(env_id, training=True):
     env = gym.make(env_id)
+    # if training: env = ClipRewardEnv(env)
     return env
