@@ -52,7 +52,7 @@ class PPO(object):
         self.logprob = self._logprob(self.action)
 
         value_fn = slim.fully_connected(vf_latent, 1, None)
-        self.value_fn = tf.squeeze(value_fn)
+        self.value_fn = tf.squeeze(value_fn, axis=-1)
 
     def _cnn(self):
         conv_1 = slim.conv2d(self.observation, 32, 8, 4)
